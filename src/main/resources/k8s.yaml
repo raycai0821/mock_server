@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock
+  namespace: st2
+spec:
+  type: ClusterIP
+  selector:
+    app: mock
+  ports:
+    - name: ms-port #微服务端口
+      port: 8182
+      targetPort: 8182
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: mock
+  namespace: st2
+  labels:
+    k8s.kuboard.cn/layer: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock
+  template:
+    metadata:
+      labels:
+        app: mock
+    spec:
+      containers:
+        - name: mock
+          image: 172.31.10.218:5000/mock-server:latest
+          imagePullPolicy: Always
+          command: ["java"]
+          args: ["-jar","mock.jar"] #激活st2环境变量
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1024Mi"
+              cpu: "1000m" #表示0.5个CPU的算力 如当前node是的CPU是4 cores的，则当前pod最大占用0.5/4 * 100% =12.5%
+          ports:
+            - containerPort: 8182
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8182
+            initialDelaySeconds: 30 #启动容器后进行首次健康检查的等待时间，单位s 这里假设我们的服务容器会在2分钟内启动完毕
+            timeoutSeconds: 5  #健康检查请求发送后的等待响应时间，超过该时间，集群会认为该容器无法提供服务，会将其重启
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8182
+            initialDelaySeconds: 30 #启动容器后进行首次健康检查的等待时间，单位s 这里假设我们的服务容器会在3分钟内启动完毕
+            timeoutSeconds: 3  #健康检查请求发送后的等待响应时间，超过该时间，被service接管的容器会被从服务列表中删除
+          lifecycle:
+            preStop:
+              exec:
+                command: ["curl -X POST http://localhost:8182/actuator/shutdown"]   #优雅的关闭springboot 服务
+          volumeMounts:
+            - name: log-dir
+              mountPath: /app/log
+            - name: bootstrap-st2
+              mountPath: /config
+      volumes:
+        - name: log-dir
+          hostPath:
+            path: /app/log
+        - name: bootstrap-st2
+          configMap:
+            name:  bootstrap-st2
